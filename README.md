@@ -4,6 +4,14 @@ DeepSeek Harness 辅助视觉插件：**任意纯文本主模型 + 任意有识�
 `opencode-go/mimo-v2.5`）。含图轮次自动让视觉模型看**原图（像素级）**，并把描述以文本
 注入当前轮供主模型使用；纯文本轮**零视觉调用**。主模型与路由保持完全不变。
 
+## 核心优势
+
+- **不换主模型**：为任意文本模型补齐图片准入，再由独立视觉模型完成识图。
+- **自动且保真**：用户图片、历史图片和 `read_image` 结果都会按需转为像素级描述；会话 UI 仍保留原图。
+- **成本可控**：纯文本轮零视觉调用；同图描述按视觉模型和附件缓存，重复图不消耗批次名额。
+- **稳定降级**：视觉模型不可用、限流或超时时，可继续对话并注入可识别的占位文本。
+- **可定向追问**：`vision_ask` 能让主模型针对指定附件或本地图片再次提问，无须更换当前会话模型。
+
 零运行时依赖（不 import 任何 `@deepseek-ai` 包，全部结构调用 `ctx.llm` / `ctx.attachments`），
 完整复用 DSH 的 llm 服务管线（`resolveModelInfo` / `prepareCall` / 流式协议），不重复实现
 provider 适配。
@@ -103,24 +111,13 @@ dsh plugin --profile web add github:<owner>/dsh-aux-vision
 | 原生视觉路由（会话/子代理） | 不重写、不注入 |
 | 插件禁用/卸载 | 能力申报还原；守卫恢复原样；历史纯文本日志继续可用 |
 
-## 验证
+## 开发检查
 
 ```sh
-node scripts/make-test-image.mjs   # 生成确定性测试图 test-fixtures/colors.png
-node scripts/verify.mjs            # 端到端验证（发图/纯文本/read_image 三条路径）
-node scripts/verify-budget.mjs     # 名额分配验证（历史缓存图不占 batchMaxImages 名额）
+npm run typecheck
+npm test
+npm run build
 ```
-
-验证要点（均已在本地 0.1.0-rc.5 + opencode-go 实测通过）：
-
-1. 新会话（默认 dsv4-flash）发图 → 准入放行，用户消息出现 `[用户附图 …（mimo-v2.5）：…` 描述注入，回复体现图片信息；
-2. 纯文本轮 → 回复正常且不含注入/占位文本；debug 日志无任何 `describe`/`stream` 条目；
-3. `read_image` 路径 → 工具结果图片经请求级兜底获得视觉描述（缓存命中），回复体现图片信息；
-4. 原生视觉路由（切 mimo-v2.5）→ 不重写、不注入；
-5. 降级路径：`visionChain` 配无效模型 + `visionDiscovery: false` → 占位文本，轮次继续；
-6. config 热更新（改 patch 配置）→ 插件重新 apply，能力补丁链幂等；
-7. 名额分配：会话历史已有 4 张缓存图时，新 `read_image` 的图仍获得描述
-   （缓存命中/重复图不占 `batchMaxImages` 名额，名额优先给新图）。
 
 ## 已知边界
 
@@ -130,11 +127,6 @@ node scripts/verify-budget.mjs     # 名额分配验证（历史缓存图不占 
 - **能力申报副作用**：文本模型在 models 目录显示为支持图片（与「装了插件后的复合能力」一致）。
 - **mimo 偶发描述不准确**：属视觉模型自身质量波动；可在 `visionChain` 配置更强模型或
   多候选降级。
-
-## 与同类插件对比
-
-dsh 生态已有 50+ 视觉类插件（toolkit / vision-proxy / 237229953-create/dsh-vision 等），
-方案分型、机制差异与改进点见 [`docs/COMPETITION.md`](docs/COMPETITION.md)。
 
 ## License
 
