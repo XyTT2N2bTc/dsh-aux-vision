@@ -1,0 +1,7 @@
+node_modules/
+lib/
+*.log
+verify-output.log
+verify-final.log
+debug-vision.log
+test-fixtures/

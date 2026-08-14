@@ -1,0 +1,6 @@
+# dsh-aux-vision 装配层。
+# 作为 profile bundle 被 `dsh plugin --profile web add github:<owner>/dsh-aux-vision` 自动追加；
+# 手动安装时把本文件内容合并进 $DSH_HOME/profiles/<name>/cordis.patch.yml。
+- insert:
+    - id: aux-vision
+      name: dsh-aux-vision
