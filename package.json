@@ -1,6 +1,6 @@
 {
   "name": "dsh-aux-vision",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "DeepSeek Harness 辅助视觉插件：任意纯文本主模型 + 任意视觉模型（默认 opencode-go/mimo-v2.5）。含图轮次自动让视觉模型看原图（像素级），并把描述以文本注入当前轮供主模型使用；纯文本轮零视觉调用。",
   "type": "module",
   "main": "lib/index.js",

@@ -142,8 +142,8 @@ export class TextAssembler {
   }
 }
 
-/** 一次视觉调用：mimo 等视觉模型看原图像素，返回描述文本。 */
-export async function describeImage(
+/** 一次视觉调用：视觉模型看原图像素 + 指定提示词，返回文本。 */
+export async function describeWithPrompt(
   llm: LlmServiceLike,
   candidate: VisionCandidate,
   ref: ImageAttachmentRef,
@@ -187,4 +187,36 @@ export async function describeImage(
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** 一次视觉描述调用（描述提示词走模板）。 */
+export async function describeImage(
+  llm: LlmServiceLike,
+  candidate: VisionCandidate,
+  ref: ImageAttachmentRef,
+  prompt: string,
+  maxTokens: number,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  return describeWithPrompt(llm, candidate, ref, prompt, maxTokens, timeoutMs, signal)
+}
+
+/** 追问式视觉问答：模型看原图并回答指定问题（不走描述模板）。 */
+export async function describeWithQuestion(
+  llm: LlmServiceLike,
+  candidate: VisionCandidate,
+  ref: ImageAttachmentRef,
+  question: string,
+  maxTokens: number,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<string> {
+  const prompt = [
+    '请仔细查看这张图片（原图），回答下面的问题。',
+    '只针对问题给出准确、具体的回答；若图片中确实无法确认，明说。',
+    '',
+    `问题：${question}`,
+  ].join('\n')
+  return describeWithPrompt(llm, candidate, ref, prompt, maxTokens, timeoutMs, signal)
 }

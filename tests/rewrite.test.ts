@@ -3,11 +3,11 @@ import assert from 'node:assert/strict'
 import {
   blocksHaveImage,
   collectImages,
+  findImageRefInEvents,
   messagesHaveImage,
   occurrenceKey,
   planVisionBudget,
   rewriteImageMessages,
-  scrubImages,
   textOfContent,
 } from '../src/rewrite.js'
 import type { ImageAttachmentRef, UserMessageLike } from '../src/types.js'
@@ -136,32 +136,6 @@ describe('rewriteImageMessages', () => {
   })
 })
 
-describe('scrubImages', () => {
-  it('replaces images with markers, including nested tool results', () => {
-    const messages = [
-      userMessage([
-        { type: 'text', text: 't' },
-        { type: 'image', attachment: REF },
-        {
-          type: 'tool-result',
-          content: [{ type: 'image', attachment: { ...REF, attachmentId: 'att-9' } }],
-        },
-      ]),
-    ]
-    const out = scrubImages(messages, ref => `[img ${ref.attachmentId}]`)
-    assert.deepEqual(out[0]?.content, [
-      { type: 'text', text: 't' },
-      { type: 'text', text: '[img att-1]' },
-      { type: 'tool-result', content: [{ type: 'text', text: '[img att-9]' }] },
-    ])
-  })
-
-  it('returns the input list when nothing changes', () => {
-    const messages = [userMessage([{ type: 'text', text: 't' }])]
-    assert.equal(scrubImages(messages, () => 'x'), messages)
-  })
-})
-
 describe('planVisionBudget', () => {
   function occurrencesOf(ids: string[]): ReturnType<typeof collectImages> {
     return collectImages(ids.map((id, index) =>
@@ -214,5 +188,44 @@ describe('planVisionBudget', () => {
     const plan = planVisionBudget(occurrences, () => true, 0)
     assert.deepEqual(plan.overflow, [])
     assert.equal(plan.describedKeys.size, 1)
+  })
+})
+
+describe('findImageRefInEvents', () => {
+  it('finds an image ref by attachmentId across events', () => {
+    const events = [
+      { type: 'user/message', data: { message: { content: [{ type: 'text', text: 'x' }] } } },
+      {
+        type: 'user/message',
+        data: {
+          message: {
+            content: [
+              { type: 'text', text: 't' },
+              { type: 'image', attachment: { ...REF, attachmentId: 'att-target' } },
+            ],
+          },
+        },
+      },
+    ]
+    const ref = findImageRefInEvents(events, 'att-target')
+    assert.equal(ref?.attachmentId, 'att-target')
+    assert.equal(findImageRefInEvents(events, 'att-missing'), undefined)
+  })
+
+  it('finds nested refs inside tool results', () => {
+    const events = [
+      {
+        type: 'tool/result',
+        data: {
+          message: {
+            content: [{
+              type: 'tool-result',
+              content: [{ type: 'text', text: 'p' }, { type: 'image', attachment: { ...REF, attachmentId: 'att-nested' } }],
+            }],
+          },
+        },
+      },
+    ]
+    assert.equal(findImageRefInEvents(events, 'att-nested')?.attachmentId, 'att-nested')
   })
 })

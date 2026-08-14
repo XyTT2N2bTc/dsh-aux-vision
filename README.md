@@ -13,23 +13,20 @@ provider 适配。
 ```
 发图(prompt RPC) ── 准入守卫 ──┬─ 通过（① 能力申报：未声明 image 的模型补报 image）
                                └─ 拒绝（未安装插件时的现状）
-        ↓ followup → inbox
-② agent/pre-step：本轮含图 & 会话路由未声明 image
-   ├─ 有图：视觉模型看原图 → 描述文本原位替换 image 块 → 落日志（纯文本）→ 主模型作答
-   └─ 无图：原样返回（零视觉调用、零开销）
-        ↓
-③ llm/stream（请求级兜底）：工具结果图片（read_image 等）与历史图片
-   进入文本模型请求时 → 视觉描述（缓存优先），失败 → 占位文本
+        ↓ followup → inbox → 原图消息落日志（**UI 显示原图**）
+        ↓ 请求构建（历史含图消息一并进入请求）
+② llm/stream：请求含图 & 路由未声明 image
+   ├─ 有图：视觉模型看原图 → 描述文本原位替换 image 块（改写请求副本）→ 主模型作答
+   └─ 无图：直通（零视觉调用、零开销）
 ```
 
 | 环节 | 说明 |
 | --- | --- |
 | ① 能力申报 | 补丁 `llm.resolveModelInfo`：凡原方法未声明 `image` 的模型，在返回副本中补入 `image`。prompt 准入守卫 / selectModel 守卫 / read_image 模态闸门因此对任意文本模型放行。pi-ai 适配器线路级检查读 pi-ai 目录，不受影响（最后一道安全网）。卸载/禁用即还原。 |
-| ② 主注入 | `agent/pre-step` waterfall：检测本轮消息含图且会话路由（`requestHeader` 或 `agent.options`）未声明 image → 视觉模型看原图 → 描述原位替换 image 块 → 消息落日志（纯文本，重放/压缩/切模型全安全）。 |
-| ③ 请求兜底 | `llm/stream`：LOOP 请求含图且路由为文本模型时，把图片块替换为描述（缓存优先）或占位。覆盖不经过 pre-step 的图片：工具结果图（`tool/result` 由 `deriveMessages` 直接折叠进请求）、插件启用前的历史图片。 |
+| ② 注入 | `llm/stream`：LOOP 请求含图（用户发图 / read_image 工具结果 / 历史图片）且路由未声明 image 时，把图片块替换为视觉描述（缓存优先）或占位，改写请求副本放行。**原图消息保留在会话日志——UI 显示原图，描述只出现在模型请求里**。 |
 | 视觉目标 | 配置候选链 `visionChain` 按序尝试（跳过无适配器/不声明 image 的候选）；链全不可用时 `visionDiscovery` 扫描**所有已注册 provider** 的目录取第一个 image 模型兜底；全不可用 → 按 `onVisionFailure` 降级。 |
 | 缓存 | 描述按 `provider:model|attachmentId` 缓存（TTL 可配），同图同轮/后续步骤/跨会话零重复调用。 |
-| 纯文本轮 | pre-step 无图短路；llm/stream 无图直通——**不产生任何视觉调用**。 |
+| 纯文本轮 | llm/stream 无图直通——**不产生任何视觉调用**（历史图片改写走缓存，零模型开销）。 |
 | 原生视觉路由 | 会话/子代理运行在声明 image 的模型上时不重写、不注入，原生看图。 |
 
 ## 安装
@@ -84,10 +81,15 @@ dsh plugin --profile web add github:<owner>/dsh-aux-vision
         onVisionFailure: marker        # marker | error（见降级）
         markerText: '[图片附件 {id}：辅助视觉模型暂不可用]'   # {id}=attachmentId
         descriptionFormat: '[用户附图 {id}（{model}）：{description}]'
-        visionPromptTemplate: '…'      # 含 {user_text} 占位
+        descriptionDetail: standard    # compact | standard(默认) | detailed 三档详细度
+        visionPromptTemplate: '…'      # 显式配置时覆盖 descriptionDetail 档位
         cacheTtlSeconds: 3600          # 描述缓存 TTL
         cacheMaxEntries: 200
         debugLogPath: ''               # 调试日志文件（空=关；warn/info 同时追加写入）
+        injectGuidance: true           # 向系统提示注入「辅助视觉引导」
+        guidanceText: '…'              # 引导文本（{model} 替换为视觉模型名）
+        guidanceOrder: 500             # 引导段落排序（不与内置段落冲突即可）
+        visionAskEnabled: true         # 注册 vision_ask 追问工具（二次定向识图）
 ```
 
 ## 降级行为
@@ -122,14 +124,17 @@ node scripts/verify-budget.mjs     # 名额分配验证（历史缓存图不占 
 
 ## 已知边界
 
-- **UI 显示**：新发图经描述注入后，会话记录里用户消息显示为描述文本（原图在附件库，
-  文本含 attachmentId 可追溯）；日志保持纯文本是重放/压缩/切模型安全的前提。
-- **切换边界**：会话切到原生视觉模型后、尚无 request header 时的第一张图仍会走注入
-  （视觉模型收到描述文本而非原图）；下一步起恢复原生。
+- **UI 显示**：原图消息保留在会话日志，会话记录显示**原图**；描述只出现在模型请求里
+  （v0.2）。历史含图消息在每次请求构建时走缓存改写（毫秒级，零视觉调用）。
+- **切换边界**：会话切到原生视觉模型后发图 → 原生看图（路由声明 image 直通）。
 - **能力申报副作用**：文本模型在 models 目录显示为支持图片（与「装了插件后的复合能力」一致）。
-- **孤儿附件**：被替换的图片字节留在附件库（内容寻址），无引用；量级有界。
 - **mimo 偶发描述不准确**：属视觉模型自身质量波动；可在 `visionChain` 配置更强模型或
   多候选降级。
+
+## 与同类插件对比
+
+dsh 生态已有 50+ 视觉类插件（toolkit / vision-proxy / 237229953-create/dsh-vision 等），
+方案分型、机制差异与改进点见 [`docs/COMPETITION.md`](docs/COMPETITION.md)。
 
 ## License
 

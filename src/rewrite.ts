@@ -5,7 +5,7 @@
  * 重写把 image 块原位替换为 text 块（描述或占位），其余块不动。
  */
 
-import type { ContentBlockLike, ImageAttachmentRef, MessageLike, UserMessageLike } from './types.js'
+import type { ContentBlockLike, ImageAttachmentRef, UserMessageLike } from './types.js'
 
 /** 一个待处理的图片出现点。 */
 export interface ImageOccurrence {
@@ -49,6 +49,38 @@ export function textOfContent(content: readonly ContentBlockLike[]): string {
   }
   walk(content)
   return parts.join('\n').trim()
+}
+
+/**
+ * 在会话事件里按 attachmentId 查找图片引用（vision_ask 等按 id 追问时用）。
+ * 递归深入 tool-result 嵌套；返回第一个匹配的引用。
+ */
+export function findImageRefInEvents(
+  events: readonly unknown[],
+  attachmentId: string,
+): ImageAttachmentRef | undefined {
+  const walk = (blocks: readonly ContentBlockLike[]): ImageAttachmentRef | undefined => {
+    for (const block of blocks) {
+      if (block.type === 'image' && block.attachment !== undefined && block.attachment.attachmentId === attachmentId) {
+        return block.attachment
+      }
+      if (Array.isArray(block.content)) {
+        const nested = walk(block.content)
+        if (nested !== undefined) return nested
+      }
+    }
+    return undefined
+  }
+  for (const event of events) {
+    if (event === null || typeof event !== 'object') continue
+    const data = (event as { data?: { message?: { content?: readonly ContentBlockLike[] }; content?: readonly ContentBlockLike[] } }).data
+    const content = data?.message?.content ?? data?.content
+    if (Array.isArray(content)) {
+      const hit = walk(content)
+      if (hit !== undefined) return hit
+    }
+  }
+  return undefined
 }
 
 /** 收集全部图片出现点（递归，含 tool-result 嵌套）。 */
@@ -152,41 +184,4 @@ export function planVisionBudget(
     }
   }
   return { describedKeys, overflow }
-}
-
-/**
- * 同步清洗含图消息：image 块 → `markerFor(ref)` 文本（历史图片兜底，不调视觉）。
- * 递归覆盖 tool-result 嵌套。
- */
-export function scrubImages(
-  messages: readonly MessageLike[],
-  markerFor: (ref: ImageAttachmentRef) => string,
-): readonly MessageLike[] {
-  let changed = false
-  const scrubBlocks = (blocks: readonly ContentBlockLike[]): ContentBlockLike[] => {
-    const out: ContentBlockLike[] = []
-    for (const block of blocks) {
-      if (block.type === 'image' && block.attachment !== undefined) {
-        changed = true
-        out.push({ type: 'text', text: markerFor(block.attachment) })
-      } else if (Array.isArray(block.content)) {
-        const nested = scrubBlocks(block.content)
-        if (nested === block.content) {
-          out.push(block)
-        } else {
-          changed = true
-          out.push({ ...block, content: nested })
-        }
-      } else {
-        out.push(block)
-      }
-    }
-    return out
-  }
-  const out = messages.map(message => {
-    if (!blocksHaveImage(message.content)) return message
-    const content = scrubBlocks(message.content)
-    return content === message.content ? message : { ...message, content }
-  })
-  return changed ? out : messages
 }

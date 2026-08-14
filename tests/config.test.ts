@@ -21,10 +21,15 @@ describe('Config', () => {
       onVisionFailure: 'marker',
       markerText: '[图片附件 {id}：辅助视觉模型暂不可用]',
       descriptionFormat: '[用户附图 {id}（{model}）：{description}]',
+      descriptionDetail: 'standard',
       visionPromptTemplate: result.value?.visionPromptTemplate,
       cacheTtlSeconds: 3600,
       cacheMaxEntries: 200,
       debugLogPath: '',
+      injectGuidance: true,
+      guidanceText: result.value?.guidanceText,
+      guidanceOrder: 500,
+      visionAskEnabled: true,
     })
   })
 
